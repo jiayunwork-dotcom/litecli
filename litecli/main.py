@@ -66,6 +66,15 @@ Query = namedtuple("Query", ["query", "successful", "mutating"])
 
 PACKAGE_ROOT = os.path.abspath(os.path.dirname(__file__))
 
+# Delimited output formats providing a dedicated variant without the header
+# row. Other formats (tabulate/vertical) skip the header when given empty
+# headers, see LiteCli.format_output().
+NOHEADER_OUTPUT_FORMATS = {
+    "csv": "csv-noheader",
+    "csv-tab": "csv-tab-noheader",
+    "tsv": "tsv_noheader",
+}
+
 
 class LiteCli(object):
     default_prompt = "\\d> "
@@ -850,6 +859,13 @@ class LiteCli(object):
             "style": self.output_style,
         }
 
+        # A null value set via .nullvalue replaces NULL cells before
+        # formatting. The replacement is done on the rows instead of passing
+        # cli_helpers' ``missing_value`` keyword: that keyword is stored on a
+        # process-wide registry and would leak into every later query, while
+        # an unset null_value (None) leaves the formatter defaults untouched.
+        null_value = special.get_null_value()
+
         if title:  # Only print the title if it's not None.
             output_iter = itertools.chain(output_iter, [title])
 
@@ -858,13 +874,26 @@ class LiteCli(object):
             if hasattr(cur, "description"):
                 column_types = [str(col) for col in cur.description]
 
-            if max_width is not None:
+            if max_width is not None or null_value is not None:
                 cur = list(cur)
+
+            if null_value is not None:
+                cur = [tuple(null_value if cell is None else cell for cell in row) for row in cur]
+
+            format_name = "vertical" if expanded else None
+            output_headers = headers
+            if not special.is_headers_enabled():
+                output_headers = []
+                # Delimited formats need their no-header variant, while
+                # tabulate/vertical formats omit the header row for an empty
+                # headers list.
+                base_format = format_name or self.formatter.format_name
+                format_name = NOHEADER_OUTPUT_FORMATS.get(base_format, format_name)
 
             formatted = self.formatter.format_output(
                 cur,
-                headers,
-                format_name="vertical" if expanded else None,
+                output_headers,
+                format_name=format_name,
                 column_types=column_types,
                 **output_kwargs,
             )
@@ -879,7 +908,7 @@ class LiteCli(object):
             if not expanded and max_width and headers and cur and len(first_line) > max_width:
                 formatted = self.formatter.format_output(
                     cur,
-                    headers,
+                    output_headers,
                     format_name="vertical",
                     column_types=column_types,
                     **output_kwargs,

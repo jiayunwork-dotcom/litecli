@@ -134,6 +134,255 @@ def test_batch_mode_csv(executor):
     assert expected in "".join(result.output)
 
 
+@pytest.fixture(autouse=True)
+def reset_session_settings():
+    """Keep the new session-level settings local to the tests that set them."""
+    from litecli.packages import special
+
+    yield
+    special.set_headers_enabled(True)
+    special.set_echo_enabled(False)
+    special.set_null_value(None)
+
+
+@dbtest
+def test_headers_off_and_on_in_tsv(executor):
+    run(executor, "create table test(a text)")
+    run(executor, "insert into test values('abc')")
+    runner = CliRunner()
+
+    result = runner.invoke(cli, args=CLI_ARGS, input=".headers off;\nselect * from test;\n")
+    assert result.exit_code == 0
+    assert "a\nabc\n" not in result.output
+    assert "abc\n" in result.output
+
+    result = runner.invoke(cli, args=CLI_ARGS, input=".headers off;\n.headers on;\nselect * from test;\n")
+    assert result.exit_code == 0
+    assert "a\nabc\n" in result.output
+
+
+@dbtest
+def test_headers_off_in_csv(executor):
+    run(executor, "create table test(a text)")
+    run(executor, "insert into test values('abc')")
+    runner = CliRunner()
+
+    result = runner.invoke(cli, args=CLI_ARGS + ["--csv"], input=".headers off;\nselect * from test;\n")
+    assert result.exit_code == 0
+    assert '"abc"\n' in result.output
+    assert '"a"' not in result.output
+
+
+@dbtest
+def test_headers_off_in_table(executor):
+    run(executor, "create table test(a text)")
+    run(executor, "insert into test values('abc')")
+    runner = CliRunner()
+
+    result = runner.invoke(cli, args=CLI_ARGS + ["-t"], input=".headers off;\nselect * from test;\n")
+    assert result.exit_code == 0
+    expected = dedent(
+        """\
+        +-----+
+        | abc |
+        +-----+"""
+    )
+    assert expected in result.output
+    assert "| a   |" not in result.output
+
+
+@dbtest
+def test_nullvalue_renders_in_all_formats(executor):
+    run(executor, "create table test(a text)")
+    run(executor, "insert into test values(NULL)")
+    runner = CliRunner()
+
+    result = runner.invoke(cli, args=CLI_ARGS, input=".nullvalue NIL;\nselect * from test;\n")
+    assert result.exit_code == 0
+    assert "a\nNIL\n" in result.output
+
+    result = runner.invoke(cli, args=CLI_ARGS + ["--csv"], input=".nullvalue NIL;\nselect * from test;\n")
+    assert result.exit_code == 0
+    assert '"a"\n"NIL"\n' in result.output
+
+    result = runner.invoke(cli, args=CLI_ARGS + ["-t"], input=".nullvalue NIL;\nselect * from test;\n")
+    assert result.exit_code == 0
+    assert "| NIL |" in result.output
+
+
+@dbtest
+def test_nullvalue_keeps_default_when_never_set(executor):
+    run(executor, "create table test(a text)")
+    run(executor, "insert into test values(NULL)")
+    runner = CliRunner()
+
+    # tsv/csv render NULL as an empty field, the table format uses <null>.
+    result = runner.invoke(cli, args=CLI_ARGS, input="select * from test;\n")
+    assert result.exit_code == 0
+    assert "a\n\n" in result.output
+
+    result = runner.invoke(cli, args=CLI_ARGS + ["--csv"], input="select * from test;\n")
+    assert result.exit_code == 0
+    assert '"a"\n""\n' in result.output
+
+    result = runner.invoke(cli, args=CLI_ARGS + ["-t"], input="select * from test;\n")
+    assert result.exit_code == 0
+    assert "<null>" in result.output
+
+
+@dbtest
+def test_nullvalue_without_argument_is_empty_string(executor):
+    run(executor, "create table test(a text)")
+    run(executor, "insert into test values(NULL)")
+    runner = CliRunner()
+
+    result = runner.invoke(cli, args=CLI_ARGS + ["--csv"], input=".nullvalue;\nselect * from test;\n")
+    assert result.exit_code == 0
+    assert '"a"\n""\n' in result.output
+
+
+@dbtest
+def test_nullvalue_treats_quotes_as_literal_text(executor):
+    run(executor, "create table test(a text)")
+    run(executor, "insert into test values(NULL)")
+    runner = CliRunner()
+
+    result = runner.invoke(cli, args=CLI_ARGS, input=".nullvalue 'N A';\nselect * from test;\n")
+    assert result.exit_code == 0
+    assert "'N A'" in result.output
+
+
+@dbtest
+def test_echo_via_execute_option(executor):
+    run(executor, "create table test(a text)")
+    run(executor, "insert into test values('abc')")
+    runner = CliRunner()
+
+    result = runner.invoke(cli, args=CLI_ARGS + ["-e", ".echo on; select 1 as a;"])
+    assert result.exit_code == 0
+    lines = result.output.splitlines()
+    # The statement is echoed verbatim without the trailing semicolon and
+    # before its result, while the dot command itself is not echoed.
+    assert "select 1 as a" in lines
+    assert ".echo on" not in lines
+    assert lines.index("select 1 as a") < lines.index("a")
+    assert all(";" not in line for line in lines if "select" in line)
+
+
+@dbtest
+def test_echo_via_stdin_batch(executor):
+    run(executor, "create table test(a text)")
+    runner = CliRunner()
+
+    result = runner.invoke(cli, args=CLI_ARGS, input=".echo on;\nselect 1 as a;\n")
+    assert result.exit_code == 0
+    lines = result.output.splitlines()
+    assert "select 1 as a" in lines
+    assert lines.index("select 1 as a") < lines.index("a")
+
+
+@dbtest
+def test_echo_off_by_default(executor):
+    runner = CliRunner()
+    result = runner.invoke(cli, args=CLI_ARGS + ["-e", "select 1 as a;"])
+    assert result.exit_code == 0
+    assert "select 1 as a" not in result.output
+
+
+@dbtest
+def test_echo_does_not_apply_to_dot_commands(executor):
+    runner = CliRunner()
+    result = runner.invoke(cli, args=CLI_ARGS + ["-e", ".echo on; .print hi;"])
+    assert result.exit_code == 0
+    lines = result.output.splitlines()
+    assert ".echo on" not in lines
+    assert ".print hi" not in lines
+    assert "hi" in lines
+
+
+@dbtest
+def test_print_command(executor):
+    runner = CliRunner()
+
+    result = runner.invoke(cli, args=CLI_ARGS + ["-e", ".print hello   world;"])
+    assert result.exit_code == 0
+    assert result.output == "hello world\n"
+
+    result = runner.invoke(cli, args=CLI_ARGS + ["-e", ".print 'N A';"])
+    assert result.exit_code == 0
+    assert result.output == "'N A'\n"
+
+
+@dbtest
+def test_print_without_arguments_outputs_nothing(executor):
+    runner = CliRunner()
+    result = runner.invoke(cli, args=CLI_ARGS + ["-e", ".print;"])
+    assert result.exit_code == 0
+    assert result.output == ""
+
+
+@dbtest
+def test_show_command_reports_settings(executor):
+    runner = CliRunner()
+
+    result = runner.invoke(cli, args=CLI_ARGS + ["-e", ".show;"])
+    assert result.exit_code == 0
+    assert result.output == 'echo: off\nheaders: on\nnullvalue: ""\n'
+
+    result = runner.invoke(
+        cli,
+        args=CLI_ARGS + ["-e", ".echo on; .headers off; .nullvalue N/A; .show;"],
+    )
+    assert result.exit_code == 0
+    assert "echo: on" in result.output
+    assert "headers: off" in result.output
+    assert 'nullvalue: "N/A"' in result.output
+
+
+@dbtest
+def test_invalid_headers_and_echo_arguments_keep_state_and_continue(executor):
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        args=CLI_ARGS + ["-e", ".headers yes; .echo 1; .echo on extra; .headers; select 1 as a; .show;"],
+    )
+    assert result.exit_code == 0
+    assert result.output.count(".headers expects") == 2
+    assert ".echo expects" in result.output
+    # The following statement still ran and the settings never changed.
+    assert "a" in result.output
+    assert "echo: off" in result.output
+    assert "headers: on" in result.output
+
+
+@dbtest
+def test_uppercase_dot_commands_are_not_implemented(executor):
+    runner = CliRunner()
+    result = runner.invoke(cli, args=CLI_ARGS + ["-e", ".HEADERS OFF; select 1 as a;"])
+    assert result.exit_code == 0
+    assert "dot command not implemented" in result.output
+    # Headers remain on, so the header row is still printed.
+    assert "a" in result.output
+
+
+@dbtest
+def test_settings_persist_across_statements(executor):
+    run(executor, "create table test(a text)")
+    run(executor, "insert into test values('abc'), (NULL)")
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        args=CLI_ARGS + ["--csv"],
+        input=".headers off;\n.nullvalue NIL;\nselect * from test;\nselect * from test;\n",
+    )
+    assert result.exit_code == 0
+    # Both result sets lack the header and render NULL the same way.
+    assert result.output.count('"abc"') == 2
+    assert result.output.count('"NIL"') == 2
+    assert '"a"' not in result.output
+
+
 def test_help_strings_end_with_periods():
     """Make sure click options have help text that end with a period."""
     for param in cli.params:

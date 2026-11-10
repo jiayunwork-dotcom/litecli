@@ -29,6 +29,15 @@ pipe_once_process: subprocess.Popen[str] | None = None
 written_to_pipe_once_process: bool = False
 favoritequeries: FavoriteQueries = FavoriteQueries(ConfigObj())
 
+# Session-level output settings.
+# headers_enabled controls the column header row in query results (on by
+# default). echo_enabled prints each SQL statement before executing it (off
+# by default). null_value is the text rendered for NULL cells; None means it
+# was never set, in which case the formatter keeps its default behavior.
+headers_enabled: bool = True
+echo_enabled: bool = False
+null_value: str | None = None
+
 log = logging.getLogger(__name__)
 
 
@@ -97,6 +106,137 @@ def set_expanded_output(val: bool) -> None:
 @export
 def is_expanded_output() -> bool:
     return use_expanded_output
+
+
+@export
+def set_headers_enabled(value: bool) -> None:
+    global headers_enabled
+    headers_enabled = value
+
+
+@export
+def is_headers_enabled() -> bool:
+    return headers_enabled
+
+
+@export
+def set_echo_enabled(value: bool) -> None:
+    global echo_enabled
+    echo_enabled = value
+
+
+@export
+def is_echo_enabled() -> bool:
+    return echo_enabled
+
+
+@export
+def set_null_value(value: str | None) -> None:
+    global null_value
+    null_value = value
+
+
+@export
+def get_null_value() -> str | None:
+    return null_value
+
+
+@export
+def echo_sql(statement: str) -> None:
+    """Print *statement* before it is executed when echo is enabled."""
+    if echo_enabled:
+        click.echo(statement)
+
+
+def parse_on_off(arg: str) -> bool | None:
+    """Parse an ``on``/``off`` argument (case-insensitive).
+
+    Return the boolean value or ``None`` when the argument is missing, has
+    more than one token, or is anything other than ``on``/``off``.
+    """
+    tokens = arg.split()
+    if len(tokens) == 1 and tokens[0].lower() in ("on", "off"):
+        return tokens[0].lower() == "on"
+    return None
+
+
+@export
+@special_command(
+    ".headers",
+    ".headers on|off",
+    "Turn display of column headers on or off.",
+    arg_type=PARSED_QUERY,
+    case_sensitive=True,
+)
+def set_headers(arg: str, **_: Any) -> list[tuple]:
+    value = parse_on_off(arg)
+    if value is None:
+        click.echo(".headers expects a single argument: 'on' or 'off'.")
+        return [(None, None, None, "")]
+    set_headers_enabled(value)
+    return [(None, None, None, "")]
+
+
+@export
+@special_command(
+    ".echo",
+    ".echo on|off",
+    "Turn echoing of SQL statements on or off.",
+    arg_type=PARSED_QUERY,
+    case_sensitive=True,
+)
+def set_echo(arg: str, **_: Any) -> list[tuple]:
+    value = parse_on_off(arg)
+    if value is None:
+        click.echo(".echo expects a single argument: 'on' or 'off'.")
+        return [(None, None, None, "")]
+    set_echo_enabled(value)
+    return [(None, None, None, "")]
+
+
+@export
+@special_command(
+    ".nullvalue",
+    ".nullvalue [text]",
+    "Set the text used to render NULL values.",
+    arg_type=PARSED_QUERY,
+    case_sensitive=True,
+)
+def set_nullvalue(arg: str, **_: Any) -> list[tuple]:
+    set_null_value(arg.strip())
+    return [(None, None, None, "")]
+
+
+@export
+@special_command(
+    ".print",
+    ".print [text]",
+    "Print the given text.",
+    arg_type=PARSED_QUERY,
+    case_sensitive=True,
+)
+def print_text(arg: str, **_: Any) -> list[tuple]:
+    # Collapse every run of whitespace (including leading/trailing) to a
+    # single space. Quotes are treated as ordinary characters.
+    text = " ".join(arg.split())
+    if text:
+        click.echo(text)
+    return [(None, None, None, "")]
+
+
+@export
+@special_command(
+    ".show",
+    ".show",
+    "Show the current echo, headers and nullvalue settings.",
+    arg_type=PARSED_QUERY,
+    case_sensitive=True,
+)
+def show_settings(arg: str, **_: Any) -> list[tuple]:
+    click.echo("echo: {}".format("on" if echo_enabled else "off"))
+    click.echo("headers: {}".format("on" if headers_enabled else "off"))
+    click.echo('nullvalue: "{}"'.format(null_value if null_value is not None else ""))
+    return [(None, None, None, "")]
 
 
 @export

@@ -1,5 +1,9 @@
 ## Unreleased
 
+### Features
+
+- Implement the `.headers`, `.nullvalue`, `.echo`, `.print` and `.show` dot commands as session-wide output settings.
+
 ### Bug Fixes
 
 - Expand `~` in configured log file paths before opening the log.

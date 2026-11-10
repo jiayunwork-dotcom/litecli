@@ -392,3 +392,44 @@ def test_time_null(executor):
     run(executor, """insert into time_null values(null)""")
     results = run(executor, """select * from time_null""")
     assert_result_equal(results, headers=["a"], rows=[(None,)])
+
+
+@dbtest
+def test_echo_prints_sql_without_semicolon(executor, capsys):
+    from litecli.packages import special
+
+    special.set_echo_enabled(True)
+    try:
+        run(executor, "select 1 as a; select 2 as b;")
+        out = capsys.readouterr().out
+    finally:
+        special.set_echo_enabled(False)
+
+    assert out.splitlines() == ["select 1 as a", "select 2 as b"]
+
+
+@dbtest
+def test_echo_skips_special_commands(executor, capsys):
+    from litecli.packages import special
+
+    special.set_echo_enabled(True)
+    try:
+        # .headers produces no output of its own, so anything captured here
+        # would be an unwanted echo of the dot command.
+        run(executor, ".headers off; select 1 as a;")
+        out = capsys.readouterr().out
+    finally:
+        special.set_headers_enabled(True)
+        special.set_echo_enabled(False)
+
+    assert ".headers" not in out
+    assert out.strip() == "select 1 as a"
+
+
+@dbtest
+def test_echo_disabled_by_default(executor, capsys):
+    from litecli.packages import special
+
+    assert special.is_echo_enabled() is False
+    run(executor, "select 1 as a;")
+    assert capsys.readouterr().out == ""

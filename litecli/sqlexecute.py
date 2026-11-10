@@ -150,6 +150,8 @@ class SQLExecute(object):
                     yield ("dot command not implemented", None, None, None)
                 else:
                     _logger.debug("Regular sql statement. sql: %r", sql)
+                    # The trailing semicolon has already been stripped above.
+                    special.echo_sql(sql)
                     assert cur is not None
                     cur.execute(sql)
                     yield self.get_result(cur)
